@@ -1,0 +1,780 @@
+\documentclass[en]{snu-ece-bsc-thesis}
+
+
+% silence some warnings
+\hfuzz=5pt
+\usepackage{silence}
+\WarningFilter{latexfont}{Some font shapes}
+\WarningFilter{latexfont}{Font shape}
+\WarningFilter{relsize}{Font size}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Font setup %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\usepackage{microtype}
+
+% Works for pdfLaTeX, XeLaTeX, and LuaLaTeX
+\usepackage{libertine}
+\makeatletter
+\setmainfont{\libertine@base}[
+  Extension = .otf,
+  Numbers = {\libertine@figurealign,\libertine@figurestyle},
+  UprightFont = *_R,
+  ItalicFont = *_RI,
+  BoldFont = *_\libertine@boldstyle,
+  BoldItalicFont = *_\libertine@boldstyle I,
+  SlantedFont = *_R,
+  SlantedFeatures = {FakeSlant=0.17},
+]
+\makeatother
+
+% Math/Mono font setup
+\usepackage[
+  math-style=ISO,
+  warnings-off={mathtools-colon, mathtools-overbracket},
+]{unicode-math}
+\setmathfont{LibertinusMath-Regular.otf}[Scale = MatchUppercase]
+\setmathfont{Garamond-Math.otf}[
+  Scale = MatchUppercase,
+  range = {\Coloneq, \coloneq},
+]
+\setmathfont{XITSMath-Regular.otf}[
+  Scale = MatchUppercase,
+  range = {\cup, bb},
+]
+
+\usepackage[only, inplus]{stmaryrd}
+
+\setmonofont{MonaspaceArgon}[
+  Extension = .otf,
+  UprightFont = *-Regular,
+  BoldFont = *-Bold,
+  ItalicFont = *-Italic,
+  BoldItalicFont = *-BoldItalic,
+  Scale=MatchLowercase,
+]
+
+\setmainhangulfont{Noto Serif CJK KR}[
+  Scale = MatchUppercase,
+  AutoFakeSlant = 0.15
+]
+\setsanshangulfont{KoPubWorldDotum_Pro}[
+  Scale = MatchUppercase,
+  BoldFont={* Bold},
+]
+\setmonohangulfont{D2Coding}[
+  Scale = MatchLowercase,
+]
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Presentations %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\usepackage{minted}
+\newminted{rs}{
+  baselinestretch = 1.2,
+  stripall = true,
+  breaklines = true,
+}
+\newminted{json}{
+  baselinestretch = 1.2,
+  stripall = true,
+  breaklines = true,
+  fontsize = \footnotesize,
+}
+
+\usepackage{codehigh}
+
+\usepackage[boxed]{algorithm2e}
+
+
+\usepackage{simplebnf}[2023/11/25]
+
+% \usepackage{ebproof}
+% \ebproofset{right label template=[\Rule\inserttext]}
+% \newcommand*{\longcenter}[1]{\[\makebox[\textwidth][c]{#1}\]}
+
+\usepackage{galois}
+
+\usepackage{amsthm}
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newcommand*{\definitionautorefname}{Definition}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Miscellaneous %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% ≔
+\usepackage{newunicodechar}
+\newfontfamily{\fallbackfont}{JuliaMono}[Scale=MatchLowercase]
+\DeclareTextFontCommand{\textfallback}{\fallbackfont}
+\newunicodechar{≔}{\textfallback{≔}}
+
+% C++ logo
+\usepackage{relsize}
+\def\cplus{\raisebox{.4ex}{\relsize{-3}{\texttt{+}}}}
+\def\C++{C\nolinebreak\hspace{-.081em}\cplus\nolinebreak\hspace{-0.02em}\cplus}
+
+\newcommand*\assign{\leftarrow}
+\NewDocumentCommand{\dom}{sm}{\IfBooleanTF{#1}{\symbb{#2}^\sharp}{\symbb{#2}}}
+\DeclareMathOperator*{\domain}{dom}
+
+
+\makeatletter
+\newcommand*\bigcdot{\mathpalette\bigcdot@{.72}}
+\newcommand*\bigcdot@[2]{\mathbin{\vcenter{\hbox{\scalebox{#2}{$\m@th#1\bullet$}}}}}
+\makeatother
+\newcommand*{\suchthat}{\bigcdot}
+
+
+\usepackage[pdfusetitle]{hyperref}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Metadata %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\addbibresource{bib.bib}
+
+\title{Rust MIR Escape Analysis: An Application to Protecting Dynamic Pointer Metadata}
+\author{이재호}
+\advisor{백윤흥}
+\date{2024년 2월}
+\approvaldate{2023년 12월 15일}
+
+\koreankeywords{탈출 분석, 메모리 최적화, 정적 분석, 요약 해석, 러스트}
+\englishkeywords{escape analysis, memory optimization, static analysis, abstract interpretation, Rust}
+
+
+\begin{document}
+\maketitle
+
+\pagenumbering{roman}
+\begin{abstract}
+  This thesis introduces a sound escape analysis for Rust Mid-Level Intermediate Representation (MIR), aimed at optimizing Rust programs by safely eliding heap allocations.
+  Grounded in the abstract interpretation framework, this escape analysis extends the MIRAI abstract interpreter and identifies potential escaping allocations leveraging the strong static type system of Rust.
+  The analyzer has been evaluated using sample code and the publically available \texttt{aho-corasick} crate, demonstrating a low false positive rate.
+  This work contributes to the memory management optimization in Rust.
+\end{abstract}
+
+
+\tableofcontents
+\listoffigures
+
+
+\chapter{Introduction}\label{chap:introduction}
+\pagenumbering{arabic}
+
+Systems programming routinely interacts with low-level hardware resources with a relatively thin layer of abstractions, compared to typical application programming.
+This interaction demands high performance, as it directly manages time-critical hardware operations.
+Therefore, systems programming requires a more granular control over computing resources, which are typically abstracted away in high-level application programming.
+This level of control ensures efficient utilization of system resources, making it a fundamental aspect of operating systems, embedded systems, and other critical software infrastructures.
+
+The C programming language has predominantly been used for systems programming, as it was the language devised to write the \textsc{Unix} operating system~\cite{k&r}.
+It was initially designed to be a portable, high-level assembly language, and has been used as a \textit{de facto} standard systems programming language for decades.
+As a high-level assembly language, C provides a fine control over low-level resources as well as the readability and structures of high-level languages.
+This balance, combined with its strightforward syntax, led to a widespread adoption of C in systems programming.
+
+However, C puts the burden of resource management on the programmer, which, inevitably, led to numerous errors causing security vulnerabilities.
+In particular, C programmers are responsible for correctly allocating and freeing memory.
+It is well-known that even the most experienced programmers make mistakes: Microsoft reported that 70\% of security vulnerability fixes are caused by memory safety violations~\cite{thomas:19}.
+As such, memory safety is a critical concern in systems programming.
+
+Rust is a new systems programming language that aims to provide the same level of control over low-level resources as C, while preventing memory-safety bugs at compile time using a strong static type system~\cite{rustbook}.
+Unlike previous approaches to manage resources which relied on best-practices, e.g., \emph{Resource Acquisition Is Initialization} or RAII in \C++, Rust enforces the safe usage of resources---it refuses to compile if it detects potential memory-safety violations.
+This proactive stance towards safety is a cornerstone of Rust's design philosophy.
+
+Manual memory management of the data stored on the heap is one of the most common sources of memory-safety bugs in C/\C++{} programs.
+Such bugs often arise due to improper allocation, deallocation, or access to memory, leading to issues like memory leaks, dangling pointers, and buffer overflows.
+
+Rust allows for safe heap allocation using the \verb/Box/ type, which is a smart pointer that \emph{owns} the data it points to.
+This ownership implies that a \verb/Box/ is responsible for freeing the memory when it is no longer needed.
+Unlike manual memory management in C, where developers must explicitly allocate and free memory, Rust's \verb/Box/ type automates this process\footnote{The \fakeverb{unique_ptr} type of \C++{} is similar to \fakeverb{Box} in that the heap data gets freed when the pointer is no longer needed, but \fakeverb{unique_ptr} can still be \fakeverb{nullptr} which leads to potential memory-safety bugs.}.
+The use of \verb/Box/ (and other smart pointers) encapsulates the details of memory management, ensuring that resources are correctly managed, and prevent many of the common pitfalls encountered in traditional systems programming using C.
+
+While it is always safe to allocate data on the heap, in the sense that the program will not lead to memory-safety bugs, allocating data on the heap is more costly than putting the data on the stack.
+Heap allocation involves complex bookkeeping machinery involving memory management systems, which track allocated and deallocated spaces to efficiently reuse memory.
+In contrast, stack allocation is much faster and more efficient due to its simple allocation strategy---it is essentially a form of pointer arithmetic.
+Therefore, it is preferable to avoid heap allocation when the data can simply be stored on the stack.
+
+To this end, this thesis presents a sound analysis that detects heap allocations that can be safely elided.
+The analysis is based on the abstract interpretation, which is a generalized framework for soundly summarizing concrete program execution behaviors without calculating the exact values.
+This approach allows us to safely approximate the behavior of Rust programs guided by the semantics of the Rust itself.
+
+
+\section{Heap allocation elision}
+In some scenarios, such as automatic code generation, data is wrapped in a \verb/Box/ and stored on the heap even when it is not necessary.
+Moreover, programmers may use \verb/Box/ to avoid the complexity of ownership semantics, which may lead to unnecessary heap allocations.
+In such cases, it is desirable to elide heap allocations and store data on the stack.
+
+\subsection{Optimization perspective}
+There are specific kinds of data that are stored on the heap.
+These include dynamic data structures that may grow or shrink in size or have undetermined size at compile time.
+Additionally, large objects are often allocated on the heap, as the limited size of stack may not be appropriate for them.
+Furthermore, \emph{escaping} objects that outlive the lifetime of a function should be stored on the heap.
+These objects need storage that is not bound to the scope of a function, unlike the stack.
+
+However, the cost of heap allocation is high compared to stack allocation, as mentioned above.
+The heap allocation comes with an overhead to track allocated and deallocated spaces to efficiently reuse memory.
+This additional complexity leads to increased memory and runtime overhead, especially in scenarios with frequent allocations and deallocations.
+
+To optimize the overhead associated with heap allocation, we can elide heap allocations that are not necessary;
+short-lived objects that do not escape a function can be safely allocated on the stack.
+
+Memory-managed languages like Go perform \emph{escape analysis} to determine the most efficient allocation strategy for each object~\cite{gobook}.
+This analysis ensures that only the objects that may ``escape,'' or persist beyond the scope of a function, are placed on the heap.
+
+In Rust, we can apply a similar approach for \verb/Box/ed types.
+By analyzing the usage and lifetime of \verb/Box/ed objects, it is possible to determine whether they can be safely allocated on the stack rather than on the heap.
+This analysis can be performed statically, leveraging the strong type system of Rust.
+
+
+\subsection{Safety perspective}
+Rust's type system incorporates a concept of \emph{ownership} in order to prevent memory-safety bugs at compile time.
+This system is central to Rust's approach to ensuring safe memory management and preventing concurrency issues.
+
+In some circumstances, however, this strict enforcement of safety can sometimes prevent efficient implementations of certain data structures, such as doubly-linked lists.
+This is undesirable for any programming language, and even more so for a \emph{systems} programming language like Rust.
+
+To address these limitations, Rust introduces \verb/unsafe/ blocks, allowing programmers to perform operations that are typically prohibited by the safety guarantees of Rust.
+Within these \verb/unsafe/ blocks, programmers can freely dereference raw pointers, read and modify mutable static variables, and perform other operations that are normally deemed unsafe.
+
+While this feature provides the flexibility needed for certain low-level operations, it also reintroduces many of the memory safety issues commonly found in ``unsafe'' languages like C and \C++{}.
+The use of \verb/unsafe/ code can potentially compromise the memory safety of the entire codebase, making it vulnerable to the same kinds of bugs and exploits that Rust aims to prevent.
+
+To mitigate the risks associated with \verb/unsafe/ Rust, recent studies such as \cite{bang23} suggest in-process isolation of safe and unsafe memory regions.
+This approach involves segregating safe objects in a designated safe memory region, while placing other objects in an unsafe region, similar to heap-like allocation.
+
+However, this na\"ive segregation approach can hinder performance, as previously discussed in the context of heap allocations.
+As such, the same escape analysis used for heap allocation elision as described in this thesis can be applied to optimize the performance of safe and unsafe memory regions.
+
+
+\section{Overview}
+The remainder of the thesis is structured as follows.
+In \autoref{chap:rust-101}, we briefly overview the distinctive features of the Rust programming language.
+In \autoref{chap:eliding-heap-allocations}, we present a sound analysis that detects heap allocations that can be safely elided.
+In \autoref{chap:evaluation}, we evaluate the analysis on some sample code, and discuss future work.
+Finally, we conclude in \autoref{chap:conclusion}.
+
+
+
+\chapter{Rust 101}\label{chap:rust-101}
+Rust brings the \emph{safety} of high-level programming languages and the \emph{low-level} control of systems programming languages:
+\begin{itemize}
+  \item It is a \emph{safe} language in the sense that it prevents memory safety bugs at compile time.
+    In C/\C++{}, use-after-free, double-free, etc. are considered undefined behavior, and the compiler does not prevent such bugs---it is the programmer's responsibility to prevent such behaviors to occur in a program.
+    In contrast, Rust's type system does not allow such code to be compiled in the first place.
+
+  \item It is a \emph{low-level} language in the sense that it provides facilities to control low-level resources.
+    In Java or Python, the programmer does not have a direct control over the memory management system.
+    Memory is automatically allocated and freed by the garbage collector in these languages.
+    On the other hand, Rust programmers can choose the allocation strategy of each object, and can even directly interact with the pointer to the object.
+\end{itemize}
+
+Here we overview the core concepts of the ownership system of Rust, which is the key to the memory safety guarantees.
+We then take a look at the escape hatch, \verb/unsafe/ Rust, which allows programmers to bypass some of the safety disciplines.
+Finally, the compilation pipeline of Rust is briefly discussed.
+
+\section{Ownership and borrowing}
+Every value in Rust has a \emph{unique} owner variable.
+When a variable gets passed to a function, the ownership of the value is transferred to the function, and the variable is no longer valid in the caller; the ownership has been \emph{moved} to the callee.
+
+Consider the following code:
+\begin{rscode}
+fn main() {
+    let mut v = vec![3, 1, 4];
+    f(v);
+    println!("{}", v[3]); // error[E0382]: borrow of moved value: `v`
+}
+fn f(mut v: Vec<i32>) {
+    v.push(1);
+}
+\end{rscode}
+This is a compile-time error, as the ownership of \verb/v/ has been moved to \verb/f/, and \verb/v/ is no longer valid in \verb/main/.
+
+This raises a necessity of passing a value to a function without transferring the ownership: \emph{borrowing}.
+A borrowed value is passed by \emph{reference}, and the owner of the value is still valid.
+Thus the above code can be fixed as follows:
+\begin{rscode}
+fn main() {
+    let mut v = vec![3, 1, 4];
+    f(&mut v); // borrow `v`
+    println!("{}", v[3]); // 1
+}
+fn f(v: &mut Vec<i32>) { // `v` is a mutable reference to `Vec<i32>`
+    v.push(1);
+}
+\end{rscode}
+
+However, borrowing should be done with care, as it can lead to uncontrolled \emph{aliasing}.
+Uncontrolled ownership is the key source of memory safety bugs in C/\C++{}.
+
+The following demonstrates the aliasing problem:
+\begin{rscode}
+fn f(x: &mut i32, y: &mut i32) -> i32 {
+    *x = 42;
+    *y = 0;
+    return *x;
+}
+\end{rscode}
+Without any assumptions on the ownership of \verb/x/ and \verb/y/, the return value of \verb/f/ can be either \verb/42/ or \verb/0/.
+It can be \verb/0/ if \verb/x/ and \verb/y/ are aliases to the same object.
+Fortunately, in Rust, the ownership of \verb/x/ and \verb/y/ are guaranteed to be distinct, and the above code is guaranteed to return \verb/42/.
+
+Rust introduces aliasing disciplines of references to prevent such aliasing.
+The \emph{borrow checker} enforces such disciplines:
+\begin{itemize}
+  \item At any given time, you can have \emph{either} one mutable reference \emph{or} any number of immutable references.
+  \item References must always be valid.
+\end{itemize}
+Therefore, in the above code, the mutable references \verb/x/ and \verb/y/ are guaranteed to point to distinct objects.
+
+
+\section{The escape hatch: \texttt{unsafe} Rust}
+While the ownership system of Rust soundly prevents memory safety bugs, it is sometimes too restrictive.
+In the case of doubly-linked lists, for example, each node is pointed by its two neighbors, and the ownership of the node cannot be uniquely determined.
+This is a fundamental limitation of the ownership system, and Rust provides an escape hatch, \verb/unsafe/ Rust, to relax some of the restrictions.
+
+Basic smart pointer types like \verb/Arc/, a reference-counted pointer, are implemented using \verb/unsafe/ Rust.
+Without \verb/unsafe/ Rust, it is cumbersome or even impossible to implement such types, as they do not have clear ownership semantics.
+
+Generally speaking, \verb/unsafe/ Rust is necessary for efficient manipulation of and direct interaction with low-level resources without clear ownership.
+
+In the scope of \texttt{unsafe} blocks, the aliasing disciplines are lifted:
+\begin{itemize}
+  \item dereferencing a raw pointer,
+  \item calling an \verb/unsafe/ function or methods,
+  \item accessing or modifying a mutable static variables, etc.
+\end{itemize}
+
+However, the use of \verb/unsafe/ Rust, as its name implies, introduces certain risks.
+We revisit the aliasing problem in \verb/unsafe/ Rust:
+\begin{rscode}
+fn f(x: &mut i32, y: &mut i32) -> i32 {
+    *x = 42;
+    *y = 0;
+    return *x; // NOT guaranteed to be 42
+}
+fn main() {
+    let mut v = 13;
+    let p = &mut v as *mut i32;
+    let x = unsafe {
+        f(&mut *p, &mut *p)
+    };
+    println!("{}", x); // 0
+}
+\end{rscode}
+Now with a presence of the \verb/unsafe/ block, the return value of \verb/f/ is not guaranteed to be \verb/42/; it is actually \verb/0/ in this case.
+Without the aliasing disciplines not enforced in the \verb/unsafe/ block, \verb/p/ is being aliased and then passed to \verb/f/.
+
+Luckily, it is possible to confirm the correctness of Rust programs with \verb/unsafe/ blocks.
+This means that a programmer can indeed encapsulate \verb/unsafe/ logic in a safe interface, and the users of the interface will not be affected by its \verb/unsafe/ implementation.
+
+This is done by formal verification of Rust programs in the Iris framework.
+The Iris framework provides a theoretical foundation to prove the correctness of \verb/unsafe/ Rust programs.
+Using the notion of \emph{semantic type soundness}, it is possible to prove the correctness of \verb/unsafe/ Rust programs~\cite{jung:20}.
+
+Nevertheless, not everyone has the luxury of formal verification of programs.
+The Iris framework requires a programmer to write a machine-checked proof in Coq proof assistant, which is, at best, a tedious task.
+This is why runtime safety checks are still helpful in the presence of \verb/unsafe/ Rust.
+
+
+\section{The compilation pipeline}
+The Rust compiler \verb/rustc/ is built on top of the LLVM compiler infrastructure.
+Thus, \verb/rustc/ only needs to perform the front-end tasks, such as parsing, type checking, and semantic analysis.
+
+\verb/rustc/ first translates the Rust source code into the \emph{abstract syntax tree} (AST).
+In this phase, macros are expanded, the AST is validated, and names are resolved.
+
+The AST is then translated into the \emph{high-level intermediate representation} (HIR).
+This is where type inference and checking, trait solving, and other semantic analysis are performed.
+
+The HIR is then lowered into the \emph{mid-level intermediate representation} (MIR).
+This is where borrow checking, pattern and exhaustiveness checking, and optimizations are performed.
+
+Finally, the MIR is lowered into the LLVM intermediate representation (LLVM IR), which is then compiled into the machine code.
+
+MIR, being the lowest Rust-specific intermediate representation, still contains high-level structure of the original program, while resolving complex statements into simple bites, making it a comfortable spot for performing the escape analysis.
+It also makes the dependencies explicit, which helps the analysis to be modularized.
+
+
+\chapter{Safely eliding the heap}\label{chap:eliding-heap-allocations}
+
+We now present a sound escape analysis that detects heap allocations that can be safely elided, based on the abstract interpretation framework.
+The target language for the analysis is the Rust MIR, and the analysis is implemented as a part of the MIRAI abstract interpreter~\cite{mirai}.
+
+
+\section{Abstract interpretation of MIR}
+\subsection{Abstract interpretation}
+Before we dive into the details of the analysis, we briefly overview the abstract interpretation framework.
+
+Abstract interpretation is a generalized framework for \emph{soundly} summarizing concrete program execution behaviors \emph{without} calculating the exact values~\cite{itsa}.
+It has the benefit of being able to analyze programs by abstracting the concrete semantics of the language, and thus can be applied to virtually all programming languages.
+
+To design an abstract interpreter, we need to define a semantic domain $\dom{D}$ of the target language.
+The semantic domain $\dom{D}$ should describe concrete program execution behaviors, and it should be a complete partial order set (CPO).
+An example of $\dom{D}$ is the powerset of the set of memory states, where each element would describe the set of possible memory states of the program.
+
+The next step is to design an abstract domain $\dom*{D}$ that aptly summarizes the semantic values for the target property.
+The abstract domain $\dom*{D}$ should also be a CPO, and should have a Galois connection $\dom{D} \galois{\alpha}{\gamma} \dom*{D}$.
+An example of $\dom*{D}$ is the set of abstract memory states, where each element would describe an abstract memory state of the program that soundly summarizes all possible concrete memory states.
+
+With the concrete domain $\dom{D}$ and the abstract domain $\dom*{D}$ in our hands, we can calculate the least fixed point of an abstract semantic function.
+An abstract semantic function should describe a single step of abstract transition between two abstract states.
+Therefore, the least fixed point of an abstract semantic function would describe the abstract state of the program that summarizes all possible concrete states after the target program has terminated.
+
+
+\subsection{The core of MIR}
+Now we present the core of MIR in \autoref{fig:mir}, which is the target language of the analysis.
+Although the full MIR language is more complex than the core, the core captures the essence of how MIR is structured.
+
+\begin{figure}[tbh]
+  \begin{center}
+    \begin{bnf}[
+      colspec = {lrcll},
+      column{4} = {mode=text, font=\ttfamily},
+    ]
+      $F$ : Function Bodies ::=
+        $(L^*, B^*)$
+    ;;
+      $L$ : Local Declarations ::=
+        $(l, \tau)$
+    ;;
+      $B$ : Basic Blocks ::=
+        $\ell_B\colon S^*$; $T$
+    ;;
+      $S$ : Statements ::=
+        $\ell_S\colon p$ ≔ $r$ : assignment
+    ;;
+      $T$ : Terminators ::=
+        goto $\ell_B$ : jump
+      | switch[$\ell_B^*$][$o$] : switch
+      | $p$ ≔ $o$($o^*$) → $\ell_B$ : function call
+    ;;
+      $p$ : Places ::=
+        $l$ : local
+      | *$p$ : dereference
+      | $p$.$f$ : field index
+      | $p$[$i$] : array index
+    ;;
+      $r$ : Rvalues ::=
+        $o$ : operand
+      | \&$p$ : reference
+      | $o \oplus o$ : binary operation
+      | $A$\{$o^*$\} : aggregate
+    ;;
+      $o$ : Operands ::=
+        copy $p$ : copy
+      | move $p$ : move
+      | $k$ : constant
+    \end{bnf}
+  \end{center}
+  \caption{The abstract syntax of the core of MIR.}\label{fig:mir}
+\end{figure}
+
+The MIR is basically a list of function bodies $F$.
+Each function body $F$ consists of a list of local declarations $L$ and a list of basic blocks $B$;
+Each basic block $B$ consists of a list of statements $S$ and a terminator $T$.
+A place $p$ conceptually represents a memory location, and an operand $o$ conceptually represents a value.
+An rvalue $r$ is either a variation of operand $o$ or a reference to a place $p$.
+
+Notable constructs of MIR are the following:
+\begin{itemize}
+  \item The assignment statement $S$ assigns an rvalue $r$ to a place $p$.
+  \item The terminator $T$ is the last statement of a basic block, and it determines the control flow of the program.
+    It is either a jump to another basic block $B$ labelled $\ell_B$, a switch statement that jumps to $\ell_B$ based on an operand $o$, or a function call that jumps to $\ell_B$.
+  \item For a function call, the function name $o$ and the arguments $o^*$ are operands, and the result of the function call is assigned to a place $p$.
+\end{itemize}
+
+
+\subsection{MIRAI}
+While it is a challenging task to formalize the semantics of a language as complex as Rust, Miri, an experimental interpreter of MIR, has been developed to provide a reference semantics of Rust~\cite{jung:20}.
+It is used to detect undefined behaviors in Rust programs, as well as being used as a testbed for the formalization of Rust semantics.
+
+Closely modeled after Miri, MIRAI is built as an abstract interpreter of MIR~\cite{mirai}.
+It uses the symbolic expressions abstract domain to summarize MIR programs, and runs over the MIR control flow graph.
+It then employs the Z3 SMT solver to resolve the constraints of symbolic expressions, subsequently concretizing these expressions into concrete values.
+This process is repeated until the abstract interpreter reaches a fixed point.
+
+When MIRAI reaches a function call, it generates a summary for the callee function.
+A summary for a function is a list of (abstract) side-effects to the heap and the mutable reference parameters.
+From the summary, MIRAI specializes it and determines the side-effects and the abstract return value of the function call.
+
+
+\section{Analyzing heap allocations}\label{sec:analyzing-heap-allocations}
+We give a semi-formal definition of the escape analysis in \autoref{def:escape-analysis}.
+\begin{definition}[Escape Analysis]\label{def:escape-analysis}
+  Given the set of algebraic data types (ADTs) $\symcal{T}$ of our interest, construct the set of fields $\symcal{F}_t$ for each $t \in \symcal{T}$, where each $f \in \symcal{F}_t$ has a boxed type $\tau(f) = \texttt{Box<\_>}$.
+  Assume that a (context-sensitive) type resolving oracle $\tau$ exists.
+  Find the multi-map of program locations to addresses $\symcal{M}$ where each $\ell \in \domain\symcal{M}$ is where escaping objects $\symcal{M}(\ell)$ of type $\tau(f)$ are allocated.
+\end{definition}
+
+To provide an example of the notation given in \autoref{def:escape-analysis}, consider the following code:
+\begin{rscode}
+struct Person {
+    name: String,
+    age: Box<i32>,
+}
+\end{rscode}
+Here, struct \verb/Person/ has a boxed field \verb/age/, while the field \verb/name/ is not boxed.
+Then if \verb/Person/ is included in the analysis ($\texttt{Person} \in \symcal{T}$\ ), then $\symcal{F}_\texttt{Person} = \{\texttt{age}\}$.
+
+We also give a notion of \emph{type containment} operator $\inplus$ in \autoref{def:type-containment}.
+\begin{definition}[Type Containment]\label{def:type-containment}
+  Given two types $\tau$ and $\tau'$, we say that $\tau$ contains $\tau'$, denoted as $\tau' \inplus \tau$, if $\tau' = \tau$ or $\tau' \inplus \tau''$ for any generic type paramter $\tau''$ of $\tau$.
+\end{definition}
+For example, \verb/Option<Box<i32>>/ contains \verb/Box<i32>/, which in turn contains \verb/i32/: \[\texttt{i32} \inplus \texttt{Box<i32>} \inplus \texttt{Option<Box<i32>>}.\]
+
+Finally, we give a notion of \emph{rootedness} operator $\rightsquigarrow$ in \autoref{def:rootedness}.
+\begin{definition}[Rootedness]\label{def:rootedness}
+  Given two paths $p$ and $p'$, we say that $p$ is rooted by $p'$, denoted as $p' \rightsquigarrow p$, if $p'$ is a prefix of $p$.
+\end{definition}
+As an example, \verb/x.y.z/ is rooted by \verb/x.y/ and \verb/x.y/ is rooted by \verb/x/: \[\texttt{x} \rightsquigarrow \texttt{x.y} \rightsquigarrow \texttt{x.y.z}.\]
+
+Algorithms shown in \autoref{algo:asgn} and \autoref{algo:adt} are run after the abstract interpreter reaches the boxed patterns, to track alloctions in $\symcal{A}_B$ for each body $B$.
+For the assignment construct \texttt{$T \Coloneqq p$ ≔ $o_f$($o_a^*$) → $\ell_B$} (\autoref{algo:asgn}), the analyzer gathers all the boxed types from the arguments and the return path, and then searches the environment $\sigma$ for the values for which the paths are rooted by the gathered paths.
+For the ADT construct \texttt{$r \Coloneqq A\{o_a^*\}$} (\autoref{algo:adt}), the analyzer gathers all the boxed types from the arguments, and then searches the environment $\sigma$ in a similar manner.
+
+\begin{figure}[tbhp]
+  \begin{algorithm}[H]
+    \DontPrintSemicolon\SetAlgoLined
+    $\symcal{P} \assign \emptyset$\;
+    \ForEach{$o \in o_a^*$}{
+      \If{$\exists t \in \symcal{T}\suchthat \tau(o) \inplus t$}{
+        $\symcal{P}\assign \symcal{P}\cup\{o.p\}$
+      }
+    }
+    \If{$\exists t \in \symcal{T}\suchthat \tau(p) \inplus t$}{
+      $\symcal{P}\assign \symcal{P}\cup\{p\}$
+    }
+    \ForEach{$p' \in \symcal{P}$}{
+      \ForEach{$(p_{\sigma}, v_{\sigma}) \in \sigma$}{
+        \If{$p' \rightsquigarrow p_{\sigma}$}{
+          $\symcal{A}_B(\ell_B) \assign \symcal{A}_B(\ell_B) \sqcup v_{\sigma}$
+        }
+      }
+    }
+  \end{algorithm}
+  \caption{Tracking allocations for the assignment construct \texttt{$T \Coloneqq p$ ≔ $o_f$($o_a^*$) → $\ell_B$}.}\label{algo:asgn}
+\end{figure}
+\begin{figure}[tbhp]
+  \begin{algorithm}[H]
+    \DontPrintSemicolon\SetAlgoLined
+    \If{$\exists t \in \symcal{T}\suchthat A \inplus t$}{
+      \ForEach{$o \in o_a^*$}{
+        \If{$o = \texttt{\upshape copy}(p) \vee o = \texttt{\upshape move}(p)$}{
+          \ForEach{$(p_{\sigma}, v_{\sigma}) \in \sigma$}{
+            \If{$p \rightsquigarrow p_{\sigma}$}{
+              $\symcal{A}_B(\ell_S) \assign \symcal{A}_B(\ell_S) \sqcup v_{\sigma}$
+            }
+          }
+        }
+      }
+    }
+  \end{algorithm}
+  \caption{Tracking allocations for the ADT construct \texttt{$r \Coloneqq A\{o_a^*\}$}.}\label{algo:adt}
+\end{figure}
+
+The algorithm for building the label-wise escaping allocations $\symcal{M}$ is shown in \autoref{algo:fn}.
+After the end of the body of a function is reached, using the gathered allocations $\symcal{A}_B$, the analyzer consults the environment $\sigma$ to build the label-wise escaping allocations.
+At the end of the function body, $\sigma$ is a side-effects list of the summary.
+
+\begin{figure}[tbhp]
+  \begin{algorithm}[H]
+    \DontPrintSemicolon\SetAlgoLined
+    \textsc{Loop}: \ForEach{$(\ell, v) \in \symcal{A}_B$}{
+      \ForEach{$a \in \gamma(v)$}{
+        \uIf{$a = \top$}{
+          $\symcal{M} \assign \symcal{M}[\ell\mapsto a]$\;
+          continue \textsc{Loop}
+        }\uElseIf{$a = \text{\upshape Heap}(\_)$}{
+          \ForEach{$(p_{\sigma}, v_{\sigma}) \in \sigma$}{
+            \If{$\exists t \in \symcal{T}\suchthat \bigl(\tau(p_{\sigma}) \inplus t \vee \exists f \in \symcal{F}_t\suchthat \tau(p_{\sigma}) \inplus \tau(f)\bigr)$}{
+              \If{$a \in \gamma(v_{\sigma}) \vee \top \in \gamma(v_{\sigma})$}{
+                $\symcal{M} \assign \symcal{M}[\ell\mapsto a]$\;
+                continue \textsc{Loop}
+              }
+            }
+          }
+        }\Else{
+          halt!
+        }
+      }
+    }
+  \end{algorithm}
+  \caption{Label-wise escaping allocations for the function construct \texttt{$F \Coloneqq (L^*, B^*)$}.}\label{algo:fn}
+\end{figure}
+
+
+
+\chapter{Implementation and evaluation}\label{chap:evaluation}
+The escape analysis algorithm described in \autoref{chap:eliding-heap-allocations} is implemented on top of MIRAI~\cite{mirai}\footnote{The implementation can be found in \url{https://www.github.com/Zeta611/mir-escape-analysis}.}.
+It has been evaluated on a sample test code and identified escaping and non-escaping allocations.
+Moreover, the analysis on the \verb/aho-corasick/ crate~\cite{aho-corasick} successfully found eight escaping allocations.
+
+\section{Implementation}
+The escape analysis targets to optimize a custom \verb/Box/-like type, \verb/OptBox/, on ADTs implementing a custom trait, \verb/EscapeAnalysis/.
+That is, unlike the original definition of the escape analysis in \autoref{def:escape-analysis}, $\symcal{F}_t$ of an ADT $t \in \symcal{T}$ need to be modified to hold the fields of type \verb/OptBox<_>/, not \verb/Box<_>/.
+This is to reduce the false positive rate of the analysis, and to make the analysis opt-in.
+
+Central data structures to the algorithms presented in \autoref{sec:analyzing-heap-allocations}, such as the tracked allocations $\symcal{A}_B$ and the label-wise escaping allocations $\symcal{M}$, are augmented into the visitor data structures.
+
+Also worth mentioning is that the \verb/rustc/ compiler has been slightly extended to easily identify the analysis targets.
+It is simply augmented with two more \verb/rustc_span::symbol::Symbol/s, \verb/OptBox/ and \verb/EscapeAnalysis/.
+These two symbols simplify the identification of the \verb/OptBox/ struct and the \verb/EscapeAnalysis/ trait while carrying out the escape analysis.
+
+\section{Sample analysis}
+The result of the escape analysis on the code shown in \autoref{fig:sample-analysis} is given in \autoref{fig:sample-result}.
+The analysis successfully identified the escaping allocations in the functions \verb/escape_1/, \verb/escape_1_mod/, \verb/escape_2/, and \verb/escape_3/, and moreover, it did not generate false positives for \verb/non_escape_1/ and \verb/non_escape_2/.
+The analysis reported false positives for \verb/escape_1/ and \verb/escape_1_mod/, but the analyzer did not suffer from any false negative, as expected.
+
+Another notable point is that the analysis reports about the \verb/implement_test_escaping_Person.clone/ function.
+This actually is the implementation of the \verb/Clone/ trait for the \verb/Person/ struct, which is automatically generated by the \verb/rustc/ compiler.
+This would not have been possible if the analysis was implemented for the Rust surface language rather than an intermediate representation.
+
+\begin{figure}[htbp]
+\begin{minted}[baselinestretch=1.2, breaklines=true, fontsize=\footnotesize]{rs}
+use escape_analysis::{EscapeAnalysis, OptBox};
+use escape_analysis_derive::EscapeAnalysis;
+#[derive(Clone)]
+struct Foo(i32);
+#[derive(Clone, EscapeAnalysis)]
+struct Person { age: OptBox<Foo> }
+fn escape_1() -> Person {
+    let p = Person { age: OptBox::new(Foo(42)) } /* Does not escape */;
+    let crowd = vec![p];
+    crowd[0].clone() /* Does escape, handled in `implement_test_escaping_Person.clone` */
+}
+fn escape_1_mod() -> Person {
+    let p = Person { age: OptBox::new(Foo(42)) };
+    let mut crowd = vec![];
+    crowd.push(p.clone());
+    if p.age.0.is_positive() {
+        p
+    } else {
+        crowd[0].clone()
+    }
+}
+fn escape_2() -> Vec<Person> {
+    let mut crowd = vec![];
+    crowd.push(Person { age: OptBox::new(Foo(42)) });
+    crowd
+}
+fn escape_3(crowd: &mut Vec<Person>) {
+    crowd.push(Person { age: OptBox::new(Foo(42)) });
+}
+fn non_escape_1() -> i32 {
+    let p = Person { age: OptBox::new(Foo(42)) };
+    p.age.0
+}
+fn non_escape_2() -> i32 {
+    let mut crowd = vec![];
+    crowd.push(Person { age: OptBox::new(Foo(42)) });
+    crowd[0].age.0
+}
+fn main() {
+    let _p = escape_1();
+    let _q = escape_1_mod();
+    let mut c = escape_2();
+    escape_3(&mut c);
+    let _a = non_escape_1() + non_escape_2();
+}
+\end{minted}
+\caption{A sample code to demonstrate the result of the escape analysis.}\label{fig:sample-analysis}
+\end{figure}
+
+\begin{figure}[htbp]
+\begin{jsoncode}
+{ "test_escaping.escape_2": [
+    [ "bb2[0]",
+      { "expression": { "HeapBlock": { "abstract_address": 5001001, "is_zeroed": false } },
+        "expression_size": 1 } ] ],
+  "test_escaping.escape_3": [
+    [ "bb1[1]",
+      { "expression": "Top",
+        "expression_size": 1 } ] ],
+  "test_escaping.main": [
+    [ "bb2[0]",
+      { "expression": "Top",
+        "expression_size": 1 } ] ],
+  "test_escaping.escape_1": [
+    [ "bb4[1]",
+      { "expression": { "HeapBlock": { "abstract_address": 12000001, "is_zeroed": false } },
+        "expression_size": 1 } ],
+    [ "bb1[1]",
+      { "expression": { "Transmute": { "operand": { "expression": { "CompileTimeConstant": { "U128": 4 } }, "expression_size": 1 }, "target_type": "ThinPointer" } },
+        "expression_size": 2 } ] ],
+  "test_escaping.implement_test_escaping_Person.clone": [
+    [ "bb1[0]",
+      { "expression": { "HeapBlock": { "abstract_address": 7000001, "is_zeroed": false } },
+        "expression_size": 1 } ],
+    [ "bb1[0]",
+      { "expression": { "HeapBlock": { "abstract_address": 7000001, "is_zeroed": false } },
+        "expression_size": 1 } ] ],
+  "test_escaping.escape_1_mod": [
+    [ "bb2[2]",
+      { "expression": { "Transmute": { "operand": { "expression": { "CompileTimeConstant": { "U128": 4 } }, "expression_size": 1 }, "target_type": "ThinPointer" } },
+        "expression_size": 2 } ],
+    [ "bb1[1]",
+      { "expression": { "HeapBlock": { "abstract_address": 4001001, "is_zeroed": false } },
+        "expression_size": 1 } ],
+    [ "bb9[1]",
+      { "expression": { "HeapBlock": { "abstract_address": 15000001, "is_zeroed": false } },
+        "expression_size": 1 } ] ] }
+\end{jsoncode}
+\caption{The result of running the escape analysis on the sample code given in \autoref{fig:sample-analysis}.}\label{fig:sample-result}
+\end{figure}
+
+\section{The \texttt{aho-corasick} crate}
+The \verb/aho-corasick/ crate~\cite{aho-corasick} was tested and successfully found 8 escaping monomorphic functions.
+The analysis took 173 seconds.
+While the analysis was sound and the results were indeed true positive, the crate did not contain any non-escaping allocation to be elided.
+
+The analysis demonstrated a tolerable running time, yet there remains significant room for performance optimization.
+The algorithms presented in \autoref{sec:analyzing-heap-allocations} have not been optimized for performance, and they involve multiply nested loops.
+
+The major shortcoming of the analysis is that it does not handle polymorphic functions.
+This is inherited from the limitation of MIRAI, which does not handle polymorphic functions---it is a non-trivial task to figure out which trait an ADT implements statically.
+
+In addition, library crates like \verb/aho-corasick/ typically do not \emph{consume} \verb/Box/es;
+They rather \emph{produce} \verb/Box/es to be consumed by the users of the crate.
+This means that the analysis is not very useful for library crates, but the users of the crates can benefit more from our analysis.
+It would be an interesting survey to compare this result with the analyses of library consuming Rust programs.
+
+
+\chapter{Conclusion}\label{chap:conclusion}
+In this thesis, we have presented a sound escape analysis for Rust MIR, aimed at optimizing program performance by eliding heap allocations.
+This analysis is particularly effective in addressing performance issues that arise from unnecessary heap allocations, whether these are the result of programmer oversight or the byproducts of automated code generation tools.
+
+The analysis is sound, as it is based on the abstract interpretation framework.
+Our escape analysis algorithm was implemented on top of MIRAI, an abstract interpreter of Rust MIR, which is in turn based on Miri, an experimental MIR interpreter.
+
+The analysis was evaluated on a sample code and the \verb/aho-corasick/ crate.
+The analysis successfully identified escaping allocations with low false positive rate; It actually did not raise any false positive for the \verb/aho-corasick/ crate.
+
+\section{Future work}
+Future work includes expanding the analysis to cover polymorphic functions.
+Currently, due to the limitation of MIRAI, the analysis does not handle polymorphic functions well.
+The exploration of polymorphic functions will be a promising opportunity for future work.
+
+In addition, incorporating the code transformation routine to put heap-elidable data on the stack will greatly improve the usefulness of our analyzer.
+
+
+
+\printbibliography
+
+\begin{abstract}[ko]
+  이 논문은 러스트(Rust)의 중간 수준 중간어(MIR)를 위한 안전한 탈출 분석을 도입하고, 힙 메모리 할당을 안전하게 생략하여 러스트 프로그램을 최적화한다.
+  제시한 탈출 분석은  요약 해석에 기반을 두어, 기존의 MIRAI 요약 실행기를 확장하면서 러스트의 강력한 정적 타입 시스템을 활용하여 탈출할 수도 있는 힙 메모리 할당을 찾아낸다.
+  고안한 분석기는 샘플 코드와 공개적으로 이용 가능한 \texttt{aho-corasick} 크레이트에 대하여 평가하였으며, 오탐율을 보여준다.
+  이 연구는 러스트의 메모리 최적화에 기여한다.
+\end{abstract}
+\end{document}
